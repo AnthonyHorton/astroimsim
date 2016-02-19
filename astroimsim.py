@@ -1,18 +1,22 @@
-# This is Python 3 code but with these import there's at least a chance it'll work in Python 2
+# This is Python 3 code but with these imports there's at least a chance it'll work in Python 2
 from __future__ import division, print_function, unicode_literals, absolute_import, with_statement
 
 import numpy as np
 from scipy.interpolate import RectSphereBivariateSpline, SmoothBivariateSpline, InterpolatedUnivariateSpline
 import astropy.io.fits as fits
 import astropy.units as u
+from astropy.coordinates import SkyCoord, GeocentricTrueEcliptic, get_sun, Angle
+from astropy.time import Time
 
 class ZodiacalLight:
     """
-
+    Class representing the Zodiacal Light sky background. Includes methods that return
+    the absolute surface brightness spectral flux density at the ecliptic poles as
+    well as the relative brightness variations as a function of position on the sky.
     """
     # Parameters for the zodiacal light spectrum
 
-    # Colina, Bohlin & Castelli solar spectrum normalised to V band flux 
+    # Colina, Bohlin & Castelli solar spectrum is normalised to V band flux 
     # of 184.2 ergs/s/cm^2/A,
     solar_normalisation = 184.2 * u.erg * u.second**-1 * u.cm**-2 * u.Angstrom**-1
     # Leinert at al NEP zodical light 1.81e-18 erg/s/cm^2/A/arcsec^2 at 0.5 um, 
@@ -20,7 +24,7 @@ class ZodiacalLight:
     zl_nep = 1.81e-18 * u.erg * u.second**-1 * u.cm**-2 * u.Angstrom**-1 * \
              u.arcsecond**-2 * 10**(-0.01)
     zl_normalisation = zl_nep / solar_normalisation
-    # Central wavelength
+    # Central wavelength for reddening/normalisation
     lambda_c = 0.5 * u.micron
     # Aldering reddening parameters
     f_blue = 0.9
@@ -59,7 +63,8 @@ class ZodiacalLight:
 
     def _calculate_spectrum(self, solar_path):
         """
-        
+        Pre-calculates absolute surface brightness spectral flux density
+        of the Zodiacal Light at the ecliptic poles.
         """
         # Load absolute solar spectrum from Collina, Bohlin & Castelli (1996)
         sun = fits.open(solar_path)
@@ -89,7 +94,7 @@ class ZodiacalLight:
 
     def _calculate_spatial(self):
         """
-
+        Pre-calculate the relative Zodiacal Light brightness variation with sky position
         """
         # Normalise scaling factor to a value of 1.0 at the NEP
         zl_scale = ZodiacalLight.zl_scale / 77
@@ -135,7 +140,44 @@ class ZodiacalLight:
         zl_patched = np.where(np.isfinite(zl_scale),zl_scale,zl_patch)
 
         # Spherical interpolation function from the full, filled data set
-        self.spatial = RectSphereBivariateSpline(beta, llsun, zl_patched, \
-                                                 pole_continuity=(False,False), pole_values=(1.0, 1.0), \
-                                                 pole_exact=True, pole_flat=False)
+        self._spatial = RectSphereBivariateSpline(beta, llsun, zl_patched, \
+                                                  pole_continuity=(False,False), pole_values=(1.0, 1.0), \
+                                                  pole_exact=True, pole_flat=False)
         
+    def relative_brightness(self, position, time):
+        """
+        Calculate the Zodiacal Light surface brightness relative to that at
+        the ecliptic poles for a given sky position and observing time.
+
+        Arguments:
+
+        position - sky position(s) in the form of either an astropy.coordinates.SkyCoord
+                   object or a string that can be converted into one.
+        time -     time of observation in the form of either an astropy.time.Time
+                   or a string that can be converted into one.
+        
+        Returns:
+
+        rel_SB -   relative sky brightness of the Zodiacal light 
+        """
+        # Convert position(s) to SkyCoord if not already one
+        if not isinstance(position, SkyCoord):
+            position = SkyCoord(position)
+
+        # Convert time to a Time if not already one
+        if not isinstance(time, Time):
+            time = Time(time)
+
+        # Convert to ecliptic coordinates at current epoch
+        position = position.transform_to(GeocentricTrueEcliptic(equinox=time))
+
+        # Get position of the Sun
+        sun = get_sun(time).transform_to(GeocentricTrueEcliptic(equinox=time))
+        
+        # Ecliptic latitude, remapped to range 0 to 180 degrees, in radians
+        beta = (Angle(90 * u.degree) - position.lat).radian
+        # Ecliptic longitude minus Sun's ecliptic longitude, remapped to 
+        # range 0 to 360 degrees, in radians
+        llsun = (position.lon - sun.lon).wrap_at(360 * u.degree).radian
+
+        return self._spatial(beta, llsun)
