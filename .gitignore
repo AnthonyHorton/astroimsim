@@ -1,3 +1,11 @@
+# Ignore emacs backup files
+*~
+
+# OS X Finder clutter
+.DS_Store
+
+# Everything below here is the GitHub template for Python projects
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
