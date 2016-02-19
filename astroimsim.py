@@ -180,4 +180,4 @@ class ZodiacalLight:
         # range 0 to 360 degrees, in radians
         llsun = (position.lon - sun.lon).wrap_at(360 * u.degree).radian
 
-        return self._spatial(beta, llsun)
+        return self._spatial(beta, llsun, grid=False)
