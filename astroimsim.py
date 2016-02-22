@@ -7,6 +7,7 @@ import astropy.io.fits as fits
 import astropy.units as u
 from astropy.coordinates import SkyCoord, GeocentricTrueEcliptic, get_sun, Angle
 from astropy.time import Time
+from astropy.wcs import WCS
 
 class ZodiacalLight:
     """
@@ -181,3 +182,39 @@ class ZodiacalLight:
         llsun = (position.lon - sun.lon).wrap_at(360 * u.degree).radian
 
         return self._spatial(beta, llsun, grid=False)
+
+class Imager:
+    """
+    Class representing an imaging instrument.
+    """
+    def __init__(self, npix_x, npix_y, pixel_scale):
+        """
+        Constructs a simple template WCS to store the focal plane configuration parameters
+        """
+        self.wcs = WCS(naxis=2)
+        self.wcs._naxis1 = npix_x
+        self.wcs._naxis2 = npix_y
+        self.wcs.wcs.crpix = [(npix_x + 1)/2, (npix_y + 1)/2]
+        self.wcs.wcs.cdelt = [pixel_scale.to(u.degree).value, pixel_scale.to(u.degree).value]
+        self.wcs.wcs.ctype = ['RA---TAN', 'DEC--TAN']
+
+    def get_pixel_coords(self, centre):
+        """
+        Utility function to return a SkyCoord array containing the on sky position
+        of the centre of all the pixels in the image centre, given a SkyCoord for
+        the field centre
+        """
+        # Ensure centre is a SkyCoord (this allows entering centre as a string)
+        if not isinstance(centre, SkyCoord):
+            centre = SkyCoord(centre)
+
+        # Set field centre coordinates in internal WCS
+        self.wcs.wcs.crval = [centre.icrs.ra.value, centre.icrs.dec.value]
+
+        # Arrays of pixel coordinates
+        XY = np.meshgrid(np.arange(self.wcs._naxis1), np.arange(self.wcs._naxis2))
+        
+        # Convert to arrays of RA, dec (ICRS, decimal degrees)
+        RAdec = self.wcs.all_pix2world(XY[0], XY[1], 0)
+
+        return RAdec
