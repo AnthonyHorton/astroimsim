@@ -165,6 +165,11 @@ class ZodiacalLight:
         if not isinstance(position, SkyCoord):
             position = SkyCoord(position)
 
+        if len(position.shape) == 2:
+            shape = position.shape
+        else:
+            shape = False
+
         # Convert time to a Time if not already one
         if not isinstance(time, Time):
             time = Time(time)
@@ -181,7 +186,13 @@ class ZodiacalLight:
         # range 0 to 360 degrees, in radians
         llsun = (position.lon - sun.lon).wrap_at(360 * u.degree).radian
 
-        return self._spatial(beta, llsun, grid=False)
+        rl = self._spatial(beta, llsun, grid=False)
+        
+        if shape:
+            rl = rl.reshape((shape[1], shape[0]))
+            rl = rl.T
+        
+        return rl
 
 class Imager:
     """
@@ -217,4 +228,4 @@ class Imager:
         # Convert to arrays of RA, dec (ICRS, decimal degrees)
         RAdec = self.wcs.all_pix2world(XY[0], XY[1], 0)
 
-        return RAdec
+        return SkyCoord(RAdec[0], RAdec[1], unit='deg')
