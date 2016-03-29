@@ -8,11 +8,13 @@ import astropy.units as u
 from astropy.coordinates import SkyCoord, GeocentricTrueEcliptic, get_sun, Angle
 from astropy.time import Time
 from astropy.wcs import WCS
+from astropy.table import Table
 
 class ZodiacalLight:
     """
-    Class representing the Zodiacal Light sky background. Includes methods that return
-    the absolute surface brightness spectral flux density at the ecliptic poles as
+    Class representing the Zodiacal Light sky background.
+
+    Includes methods that return the absolute surface brightness spectral flux density at the ecliptic poles as
     well as the relative brightness variations as a function of position on the sky.
     """
     # Parameters for the zodiacal light spectrum
@@ -64,8 +66,7 @@ class ZodiacalLight:
 
     def _calculate_spectrum(self, solar_path):
         """
-        Pre-calculates absolute surface brightness spectral flux density
-        of the Zodiacal Light at the ecliptic poles.
+        Pre-calculates absolute surface brightness spectral flux density of the Zodiacal Light at the ecliptic poles.
         """
         # Load absolute solar spectrum from Collina, Bohlin & Castelli (1996)
         sun = fits.open(solar_path)
@@ -147,19 +148,16 @@ class ZodiacalLight:
         
     def relative_brightness(self, position, time):
         """
-        Calculate the Zodiacal Light surface brightness relative to that at
-        the ecliptic poles for a given sky position and observing time.
+        Calculate the Zodiacal Light surface brightness relative to that at the ecliptic poles for a given sky position and observing time.
 
-        Arguments:
-
-        position - sky position(s) in the form of either an astropy.coordinates.SkyCoord
-                   object or a string that can be converted into one.
-        time -     time of observation in the form of either an astropy.time.Time
-                   or a string that can be converted into one.
+        Args:
+            position: sky position(s) in the form of either an astropy.coordinates.SkyCoord
+                object or a string that can be converted into one.
+            time: time of observation in the form of either an astropy.time.Time
+                or a string that can be converted into one.
         
         Returns:
-
-        rel_SB -   relative sky brightness of the Zodiacal light 
+            rel_SB: relative sky brightness of the Zodiacal light 
         """
         # Convert position(s) to SkyCoord if not already one
         if not isinstance(position, SkyCoord):
@@ -198,16 +196,43 @@ class Imager:
     """
     Class representing an imaging instrument.
     """
-    def __init__(self, npix_x, npix_y, pixel_scale):
-        """
-        Constructs a simple template WCS to store the focal plane configuration parameters
-        """
+    def __init__(self, npix_x, npix_y, pixel_scale, aperture_area, throughput, filters, QE):
+        
+        # Construct a simple template WCS to store the focal plane configuration parameters
         self.wcs = WCS(naxis=2)
         self.wcs._naxis1 = npix_x
         self.wcs._naxis2 = npix_y
         self.wcs.wcs.crpix = [(npix_x + 1)/2, (npix_y + 1)/2]
         self.wcs.wcs.cdelt = [pixel_scale.to(u.degree).value, pixel_scale.to(u.degree).value]
         self.wcs.wcs.ctype = ['RA---TAN', 'DEC--TAN']
+
+        # Store throughput related parameters
+        self.aperture_area = aperture_area
+        self.throughput = throughput
+        self.filters = filters
+        self.QE = QE
+
+        # Pre-calculate effective aperture areas
+        self._eff_areas = self._effective_areas()
+
+    def _effective_areas(self):
+        """
+        Utility function to calculate the effective aperture area of for each filter as a function of
+        wavelength, i.e. aperture area * optical throughput * image sensor QE
+        """
+        eff_areas = {}
+
+        for (f_name, f_data) in self.filters.items():
+            # Interpolate throughput data at same wavelengths as filter transmission data
+            t = np.interp(f_data['Wavelength'], self.throughput['Wavelength'], \
+                          self.throughput['Throughput']) *  self.throughput['Throughput'].unit
+            # Interpolate QE data at same wavelengths as filter transmission data
+            q = np.interp(f_data['Wavelength'], self.QE['Wavelength'], self.QE['QE']) *  self.QE['QE'].unit
+            eff_areas[f_name] = Table(names = ('Wavelength', 'Effective Area'), \
+                                      data = (f_data['Wavelength'], self.aperture_area * t * f_data['Transmission'] * q))
+
+        return eff_areas
+        
 
     def get_pixel_coords(self, centre):
         """
