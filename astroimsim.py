@@ -198,6 +198,8 @@ class Imager:
     """
     def __init__(self, npix_x, npix_y, pixel_scale, aperture_area, throughput, filters, QE):
         
+        self.pixel_scale = pixel_scale
+
         # Construct a simple template WCS to store the focal plane configuration parameters
         self.wcs = WCS(naxis=2)
         self.wcs._naxis1 = npix_x
@@ -254,3 +256,28 @@ class Imager:
         RAdec = self.wcs.all_pix2world(XY[0], XY[1], 0)
 
         return SkyCoord(RAdec[0], RAdec[1], unit='deg')
+
+    def make_image(self, centre, time, f, exp_time = 1.0, zl = False):
+        """
+        Function to create a simulated image for a given image centre and observation time.
+        """
+        if zl:
+            # Calculate observed zodiacal light background
+
+            # First step, integrate product of zodiacal light photon SFD and effective aperture area 
+            # over wavelength to get observed ecliptic pole surface brightness for each filter.
+            eff_area_interp = np.interp(zl.waves, self._eff_areas[f]['Wavelength'], \
+                                        self._eff_areas[f]['Effective Area']) * \
+                                        self._eff_areas[f]['Effective Area'].unit
+            zl_obs_ep = np.trapz(zl.photon_sfd * eff_area_interp, x=zl.waves)
+
+            # Second, get relative zodical light brightness for each pixel
+            pixel_coords = self.get_pixel_coords(centre)
+            zl_rel = zl.relative_brightness(pixel_coords, time)
+            # TODO: calculate area of each pixel, for now use nominal pixel scale^2
+            
+            # Finally multiply to get an observed zodical light image
+            zl_obs = zl_obs_ep * zl_rel * self.pixel_scale**2
+
+            return zl_obs, self.wcs
+        
