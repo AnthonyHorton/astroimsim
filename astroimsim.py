@@ -9,6 +9,7 @@ from astropy.coordinates import SkyCoord, GeocentricTrueEcliptic, get_sun, Angle
 from astropy.time import Time
 from astropy.wcs import WCS
 from astropy.table import Table
+from scipy.stats import poisson, norm
 
 class ZodiacalLight:
     """
@@ -196,7 +197,7 @@ class Imager:
     """
     Class representing an imaging instrument.
     """
-    def __init__(self, npix_x, npix_y, pixel_scale, aperture_area, throughput, filters, QE):
+    def __init__(self, npix_x, npix_y, pixel_scale, aperture_area, throughput, filters, QE, gain, read_noise):
         
         self.pixel_scale = pixel_scale
 
@@ -213,6 +214,9 @@ class Imager:
         self.throughput = throughput
         self.filters = filters
         self.QE = QE
+
+        self.gain = gain
+        self.read_noise = read_noise
 
         # Pre-calculate effective aperture areas
         self._eff_areas = self._effective_areas()
@@ -257,10 +261,12 @@ class Imager:
 
         return SkyCoord(RAdec[0], RAdec[1], unit='deg')
 
-    def make_image(self, centre, time, f, exp_time = 1.0, zl = False):
+    def make_noiseless_image(self, centre, time, f, exp_time = 1.0, zl = False):
         """
-        Function to create a simulated image for a given image centre and observation time.
+        Function to create a noiseless simulated image for a given image centre and observation time.
         """
+        electrons = np.zeros((self.wcs._naxis2, self.wcs._naxis1))
+
         if zl:
             # Calculate observed zodiacal light background
 
@@ -274,10 +280,27 @@ class Imager:
             # Second, get relative zodical light brightness for each pixel
             pixel_coords = self.get_pixel_coords(centre)
             zl_rel = zl.relative_brightness(pixel_coords, time)
-            # TODO: calculate area of each pixel, for now use nominal pixel scale^2
             
+            # TODO: calculate area of each pixel, for now use nominal pixel scale^2
             # Finally multiply to get an observed zodical light image
-            zl_obs = zl_obs_ep * zl_rel * self.pixel_scale**2
+            zl_obs = zl_obs_ep * zl_rel * self.pixel_scale**2 * exp_time
+            electrons += zl_obs
 
-            return zl_obs, self.wcs
+        return electrons, self.wcs
+
+    def make_image_real(self, electrons, wcs):
+        """
+        Given a noiseless simulated image in electrons per pixel add Poisson noise,
+        read noise, and converts to ADU using the predefined gain.
+        """
+        # Apply Poisson noise.
+        data = (poisson.rvs(electrons)).astype('float64')
+        # Apply read noise
+        data += norm.rvs(scale=self.read_noise, size=electrons.shape)
+        # Convert to ADU
+        data /= self.gain
+        # 'Analogue to digital conversion'
+        data = data.astype('int16')
+
+        return data, wcs
         
