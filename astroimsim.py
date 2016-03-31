@@ -261,17 +261,19 @@ class Imager:
 
         return SkyCoord(RAdec[0], RAdec[1], unit='deg')
 
-    def make_noiseless_image(self, centre, time, f, exp_time = 1.0, zl = False):
+    def make_noiseless_image(self, centre, time, f, zl = False):
         """
         Function to create a noiseless simulated image for a given image centre and observation time.
         """
-        electrons = np.zeros((self.wcs._naxis2, self.wcs._naxis1))
+        electrons = np.zeros((self.wcs._naxis2, self.wcs._naxis1)) * u.electron / u.second
 
         if zl:
             # Calculate observed zodiacal light background
 
             # First step, integrate product of zodiacal light photon SFD and effective aperture area 
             # over wavelength to get observed ecliptic pole surface brightness for each filter.
+            # Note, these are constant with time so can (and should) be precalculate once
+            # when creating a large number simulated images (TODO).
             eff_area_interp = np.interp(zl.waves, self._eff_areas[f]['Wavelength'], \
                                         self._eff_areas[f]['Effective Area']) * \
                                         self._eff_areas[f]['Effective Area'].unit
@@ -283,24 +285,27 @@ class Imager:
             
             # TODO: calculate area of each pixel, for now use nominal pixel scale^2
             # Finally multiply to get an observed zodical light image
-            zl_obs = zl_obs_ep * zl_rel * self.pixel_scale**2 * exp_time
+            zl_obs = zl_obs_ep * zl_rel * self.pixel_scale**2
             electrons += zl_obs
 
         return electrons, self.wcs
 
-    def make_image_real(self, electrons, wcs):
+    def make_image_real(self, electrons, wcs, exp_time):
         """
         Given a noiseless simulated image in electrons per pixel add Poisson noise,
         read noise, and converts to ADU using the predefined gain.
         """
+        # Scale photoelectron rates by exposure time
+        data = electrons * exp_time
         # Apply Poisson noise.
-        data = (poisson.rvs(electrons)).astype('float64')
+        data = (poisson.rvs(data/u.electron)).astype('float64')
         # Apply read noise
-        data += norm.rvs(scale=self.read_noise, size=electrons.shape)
+        data += norm.rvs(scale=self.read_noise/u.electron, size=data.shape)
         # Convert to ADU
         data /= self.gain
         # 'Analogue to digital conversion'
-        data = data.astype('int16')
+        data = np.where(data < 2**16, data, 2**16 - 1)
+        data = data.astype('uint16')
 
         return data, wcs
         
