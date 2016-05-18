@@ -9,7 +9,7 @@ from astropy.coordinates import SkyCoord, GeocentricTrueEcliptic, get_sun, Angle
 from astropy.time import Time
 from astropy.wcs import WCS
 from astropy.table import Table
-from scipy.stats import poisson, norm
+from scipy.stats import poisson, norm, lognorm
 
 class ZodiacalLight:
     """
@@ -220,6 +220,22 @@ class Imager:
 
         # Pre-calculate effective aperture areas
         self._eff_areas = self._effective_areas()
+
+    def _dark_frame(self, T, alpha=0.0488/u.Kelvin, beta=-12.772, seed=None):
+        """
+        Function to create a dark current 'image' in electrons per second per pixel given
+        an image sensor temperature and a set of coefficients for a simple dark current model.
+
+        Median dark current for the image sensor as a whole is modelled as D.C. = 10**(alpha * T + beta) where 
+        T is the temperature in Kelvin.  Individual pixel dark currents are random uncorrelated values from
+        a log normal distribution so that there is a semi-realistic tail of 'hot pixels'.
+
+        For reproducible dark frames the random number generator seed can optionally be specified.
+        """
+        T = T.to(u.Kelvin)
+        self.median_dark_current = 10**(alpha * T + beta) * u.electron / (u.pixel * u.second)
+        self.dark_frame = scipy.stats.lognorm.rvs(loc = , size=(self.wcs._naxis2, self.wcs._naxis1), seed=seed)
+        
 
     def _effective_areas(self):
         """
