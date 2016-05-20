@@ -197,7 +197,7 @@ class Imager:
     """
     Class representing an imaging instrument.
     """
-    def __init__(self, npix_x, npix_y, pixel_scale, aperture_area, throughput, filters, QE, gain, read_noise):
+    def __init__(self, npix_x, npix_y, pixel_scale, aperture_area, throughput, filters, QE, gain, read_noise, temperature):
         
         self.pixel_scale = pixel_scale
 
@@ -221,21 +221,28 @@ class Imager:
         # Pre-calculate effective aperture areas
         self._eff_areas = self._effective_areas()
 
-    def _dark_frame(self, T, alpha=0.0488/u.Kelvin, beta=-12.772, seed=None):
+        # Precalculate dark frame
+        self.dark_current, self.dark_frame = self._make_dark_frame(temperature)
+
+    def _make_dark_frame(self, temperature, alpha=0.0488/u.Kelvin, beta=-12.772, shape=0.4, seed=None):
         """
         Function to create a dark current 'image' in electrons per second per pixel given
         an image sensor temperature and a set of coefficients for a simple dark current model.
 
-        Median dark current for the image sensor as a whole is modelled as D.C. = 10**(alpha * T + beta) where 
+        Modal dark current for the image sensor as a whole is modelled as D.C. = 10**(alpha * T + beta) where 
         T is the temperature in Kelvin.  Individual pixel dark currents are random uncorrelated values from
         a log normal distribution so that there is a semi-realistic tail of 'hot pixels'.
 
         For reproducible dark frames the random number generator seed can optionally be specified.
         """
-        T = T.to(u.Kelvin)
-        self.median_dark_current = 10**(alpha * T + beta) * u.electron / (u.pixel * u.second)
-        self.dark_frame = scipy.stats.lognorm.rvs(loc = , size=(self.wcs._naxis2, self.wcs._naxis1), seed=seed)
+        temperature = temperature.to(u.Kelvin, equivalencies=u.equivalencies.temperature())
+        mode = 10**(alpha * temperature + beta) * u.electron / (u.second)
+        scale = mode * np.exp(shape**2)
+        if seed:
+            np.random.seed(seed)
+        dark_frame = lognorm.rvs(shape, scale=scale, size=(self.wcs._naxis2, self.wcs._naxis1))
         
+        return mode, dark_frame
 
     def _effective_areas(self):
         """
@@ -306,19 +313,24 @@ class Imager:
 
         return electrons, self.wcs
 
-    def make_image_real(self, electrons, wcs, exp_time):
+    def make_image_real(self, electrons, wcs, exp_time, subtract_dark = False):
         """
         Given a noiseless simulated image in electrons per pixel add Poisson noise,
         read noise, and converts to ADU using the predefined gain.
         """
         # Scale photoelectron rates by exposure time
         data = electrons * exp_time
+        # Add dark current
+        data += self.dark_frame * exp_time
         # Apply Poisson noise.
         data = (poisson.rvs(data/u.electron)).astype('float64')
         # Apply read noise
         data += norm.rvs(scale=self.read_noise/u.electron, size=data.shape)
         # Convert to ADU
         data /= self.gain
+        # Optionally subtract a Perfect Dark
+        if subtract_dark:
+            data -= self.dark_frame * exp_time
         # 'Analogue to digital conversion'
         data = np.where(data < 2**16, data, 2**16 - 1)
         data = data.astype('uint16')
