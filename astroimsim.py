@@ -3,13 +3,14 @@ from __future__ import division, print_function, unicode_literals, absolute_impo
 
 import numpy as np
 from scipy.interpolate import RectSphereBivariateSpline, SmoothBivariateSpline, InterpolatedUnivariateSpline
+from scipy.stats import poisson, norm, lognorm
 import astropy.io.fits as fits
 import astropy.units as u
 from astropy.coordinates import SkyCoord, GeocentricTrueEcliptic, get_sun, Angle
 from astropy.time import Time
 from astropy.wcs import WCS
 from astropy.table import Table
-from scipy.stats import poisson, norm, lognorm
+import ccdproc
 
 class ZodiacalLight:
     """
@@ -303,7 +304,7 @@ class Imager:
             zl_obs_ep = np.trapz(zl.photon_sfd * eff_area_interp, x=zl.waves)
 
             # Second, get relative zodical light brightness for each pixel
-            pixel_coords = self.get_pixel_coords(centre)
+            pixel_coords = self.get_pixel_coords(centre) # Note, side effect of this is setting centre of self.wcs
             zl_rel = zl.relative_brightness(pixel_coords, time)
             
             # TODO: calculate area of each pixel, for now use nominal pixel scale^2
@@ -311,29 +312,39 @@ class Imager:
             zl_obs = zl_obs_ep * zl_rel * self.pixel_scale**2
             electrons += zl_obs
 
-        return electrons, self.wcs
+        noiseless = ccdproc.CCDData(electrons, wcs=self.wcs)
 
-    def make_image_real(self, electrons, wcs, exp_time, subtract_dark = False):
+        return noiseless
+
+    def make_image_real(self, noiseless, exp_time, subtract_dark = False):
         """
         Given a noiseless simulated image in electrons per pixel add Poisson noise,
-        read noise, and converts to ADU using the predefined gain.
+        dark current and read noise, and converts to ADU using the predefined gain.
         """
         # Scale photoelectron rates by exposure time
-        data = electrons * exp_time
+        data = noiseless.data * noiseless.unit * exp_time
         # Add dark current
         data += self.dark_frame * exp_time
-        # Apply Poisson noise.
-        data = (poisson.rvs(data/u.electron)).astype('float64')
-        # Apply read noise
-        data += norm.rvs(scale=self.read_noise/u.electron, size=data.shape)
-        # Convert to ADU
-        data /= self.gain
+        # Force to electron units
+        data = data.to(u.electron)
+        # Apply Poisson noise. This is not unit-aware, need to restore them manually
+        data = (poisson.rvs(data/u.electron)).astype('float64') * u.electron
+        # Apply read noise. Again need to restore units manually
+        data += norm.rvs(scale=self.read_noise/u.electron, size=data.shape) * u.electron
         # Optionally subtract a Perfect Dark
         if subtract_dark:
-            data -= self.dark_frame * exp_time
+            data -= (self.dark_frame * exp_time).to(u.electron)
+        # Convert to ADU
+        data /= self.gain
+        # Force to adu (just here to catch unit problems)
+        data = data.to(u.adu)
         # 'Analogue to digital conversion'
-        data = np.where(data < 2**16, data, 2**16 - 1)
+        data = np.where(data < 2**16 * u.adu, data, (2**16 - 1) * u.adu)
         data = data.astype('uint16')
+        # Data type conversion strips units so need to put them back manually
+        image = ccdproc.CCDData(data, wcs=noiseless.wcs, unit=u.adu)
+        image.header['EXPTIME'] = exp_time
+        image.header['DARKSUB'] = subtract_dark
 
-        return data, wcs
+        return image
         
