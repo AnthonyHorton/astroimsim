@@ -318,8 +318,8 @@ class Imager:
 
     def make_image_real(self, noiseless, exp_time, subtract_dark = False):
         """
-        Given a noiseless simulated image in electrons per pixel add Poisson noise,
-        dark current and read noise, and converts to ADU using the predefined gain.
+        Given a noiseless simulated image in electrons per pixel add dark current, 
+        Poisson noise and read noise, and convert to ADU using the predefined gain.
         """
         # Scale photoelectron rates by exposure time
         data = noiseless.data * noiseless.unit * exp_time
