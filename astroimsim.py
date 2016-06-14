@@ -4,6 +4,7 @@ from __future__ import division, print_function, unicode_literals, absolute_impo
 import numpy as np
 from scipy.interpolate import RectSphereBivariateSpline, SmoothBivariateSpline, InterpolatedUnivariateSpline
 from scipy.stats import poisson, norm, lognorm
+from scipy.special import eval_chebyt
 import astropy.io.fits as fits
 import astropy.units as u
 from astropy.coordinates import SkyCoord, GeocentricTrueEcliptic, get_sun, Angle
@@ -347,4 +348,27 @@ class Imager:
         image.header['DARKSUB'] = subtract_dark
 
         return image
-        
+
+def butter_band(w, w1, w2, N, peak=0.95):
+    """
+    Simple Butterworth bandpass filter function in wavelength space
+    To be more realistic this should probably be a Chebyshev Type I function
+    instead, and should definitely include cone angle effect but at f/5.34
+    (Space Eye focal ratio) the latter at least is pretty insignficant
+    """
+    # Bandpass implemented as low pass and high pass in series
+    g1 = np.sqrt(1 / (1 + (w1/w).to(u.dimensionless_unscaled)**(2*N)))
+    g2 = np.sqrt(1 / (1 + (w/w2).to(u.dimensionless_unscaled)**(2*N)))
+    return peak * g1 * g2
+
+
+def cheby_band(w, w1, w2, N, ripple=1, peak=0.95):
+    """
+    Simple Chebyshev Type I bandpass filter function in wavelength space
+    To be more realistic this should definitely include cone angle effect 
+    but at f/5.34 (Space Eye focal ratio) that is pretty insignficant    
+    """
+    # Bandpass implemented as low pass and high pass in series
+    g1 = 1 / np.sqrt(1 + ripple**2 * eval_chebyt(N, (w1/w).to(u.dimensionless_unscaled).value)**2)
+    g2 = 1 / np.sqrt(1 + ripple**2 * eval_chebyt(N, (w/w2).to(u.dimensionless_unscaled).value)**2)
+    return peak * g1 * g2
