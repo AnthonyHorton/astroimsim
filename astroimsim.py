@@ -199,7 +199,7 @@ class Imager:
     """
     Class representing an imaging instrument.
     """
-    def __init__(self, npix_x, npix_y, pixel_scale, aperture_area, throughput, filters, QE, gain, read_noise, temperature):
+    def __init__(self, npix_x, npix_y, pixel_scale, aperture_area, throughput, filters, QE, gain, read_noise, temperature, zl):
         
         self.pixel_scale = pixel_scale
 
@@ -220,8 +220,11 @@ class Imager:
         self.gain = gain
         self.read_noise = read_noise
 
-        # Pre-calculate effective aperture areas
+        self.zl = zl
+
+        # Pre-calculate effective aperture areas and normalisation for observed ZL
         self._eff_areas = self._effective_areas()
+        self._zl_ep = self._zl_obs_ep()
 
         # Precalculate dark frame
         self.dark_current, self.dark_frame = self._make_dark_frame(temperature)
@@ -263,7 +266,24 @@ class Imager:
                                       data = (f_data['Wavelength'], self.aperture_area * t * f_data['Transmission'] * q))
 
         return eff_areas
-        
+
+    def _zl_obs_ep(self):
+        """
+        Utility function to pre-calculate observed ecliptic pole zodiacal light count rates
+        """
+        # Integrate product of zodiacal light photon SFD and effective aperture area 
+        # over wavelength to get observed ecliptic pole surface brightness for each filter.
+        # Note, these are constant with time so can and should precalculate once.
+        zl_ep = {}
+
+        for f in self.filters.keys():
+            electrons = np.zeros((self.wcs._naxis2, self.wcs._naxis1)) * u.electron / u.second
+            eff_area_interp = np.interp(self.zl.waves, self._eff_areas[f]['Wavelength'], \
+                                        self._eff_areas[f]['Effective Area']) * \
+                                        self._eff_areas[f]['Effective Area'].unit
+            zl_ep[f] = (np.trapz(self.zl.photon_sfd * eff_area_interp, x=self.zl.waves))
+
+        return zl_ep
 
     def get_pixel_coords(self, centre):
         """
@@ -286,32 +306,23 @@ class Imager:
 
         return SkyCoord(RAdec[0], RAdec[1], unit='deg')
 
-    def make_noiseless_image(self, centre, time, f, zl = False):
+    def make_noiseless_image(self, centre, time, f):
         """
         Function to create a noiseless simulated image for a given image centre and observation time.
         """
         electrons = np.zeros((self.wcs._naxis2, self.wcs._naxis1)) * u.electron / u.second
-
-        if zl:
-            # Calculate observed zodiacal light background
-
-            # First step, integrate product of zodiacal light photon SFD and effective aperture area 
-            # over wavelength to get observed ecliptic pole surface brightness for each filter.
-            # Note, these are constant with time so can (and should) be precalculate once
-            # when creating a large number simulated images (TODO).
-            eff_area_interp = np.interp(zl.waves, self._eff_areas[f]['Wavelength'], \
-                                        self._eff_areas[f]['Effective Area']) * \
-                                        self._eff_areas[f]['Effective Area'].unit
-            zl_obs_ep = np.trapz(zl.photon_sfd * eff_area_interp, x=zl.waves)
-
-            # Second, get relative zodical light brightness for each pixel
-            pixel_coords = self.get_pixel_coords(centre) # Note, side effect of this is setting centre of self.wcs
-            zl_rel = zl.relative_brightness(pixel_coords, time)
+        
+        # Calculate observed zodiacal light background.
+        # Get relative zodical light brightness for each pixel
+        # Note, side effect of this is setting centre of self.wcs
+        pixel_coords = self.get_pixel_coords(centre) 
+        zl_rel = zl.relative_brightness(pixel_coords, time)
             
-            # TODO: calculate area of each pixel, for now use nominal pixel scale^2
-            # Finally multiply to get an observed zodical light image
-            zl_obs = zl_obs_ep * zl_rel * self.pixel_scale**2
-            electrons += zl_obs
+        # TODO: calculate area of each pixel, for now use nominal pixel scale^2
+        # Finally multiply to get an observed zodical light image
+        zl_obs = self.zl_obs_ep * zl_rel * self.pixel_scale**2
+        
+        electrons += zl_obs
 
         noiseless = ccdproc.CCDData(electrons, wcs=self.wcs)
 
