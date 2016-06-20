@@ -222,8 +222,11 @@ class Imager:
 
         self.zl = zl
 
-        # Pre-calculate effective aperture areas and normalisation for observed ZL
+        # Pre-calculate effective aperture areas and pivot wavelenghts
         self._eff_areas = self._effective_areas()
+        self._pivot_waves = self._pivot_wavelengths()
+
+        # Pre-calculate normalisation for observed ZL
         self._zl_ep = self._zl_obs_ep()
 
         # Precalculate dark frame
@@ -266,6 +269,23 @@ class Imager:
                                       data = (f_data['Wavelength'], self.aperture_area * t * f_data['Transmission'] * q))
 
         return eff_areas
+
+    def _pivot_wavelengths(self):
+        """
+        Utility function to calculate the pivot wavelengths for each of the filters using the 
+        effective area data (must be pre-calculated before calling this function).
+        """
+        pivot_waves = {}
+
+        # Generally this is definied in terms of system efficiency instead of aperture
+        # effective aperture area but they're equivalent as the aperture area factor
+        # cancels.
+        for (f_name, eff_data) in self._eff_areas.items():
+            p1 = np.trapz(eff_data['Effective Area'] * eff_data['Wavelength'], x=eff_data['Wavelength'])
+            p2 = np.trapz(eff_data['Effective Area'] / eff_data['Wavelength'], x=eff_data['Wavelength'])
+            pivot_waves[f_name] = (p1/p2)**0.5 * eff_data['Wavelength'].unit
+
+        return pivot_waves
 
     def _zl_obs_ep(self):
         """
