@@ -7,6 +7,7 @@ from scipy.stats import poisson, norm, lognorm
 from scipy.special import eval_chebyt
 import astropy.io.fits as fits
 import astropy.units as u
+import astropy.constants as c
 from astropy.coordinates import SkyCoord, GeocentricTrueEcliptic, get_sun, Angle
 from astropy.time import Time
 from astropy.wcs import WCS
@@ -222,9 +223,10 @@ class Imager:
 
         self.zl = zl
 
-        # Pre-calculate effective aperture areas and pivot wavelenghts
+        # Pre-calculate effective aperture areas. pivot wavelengths and sensitivity integrals
         self._eff_areas = self._effective_areas()
         self._pivot_waves = self._pivot_wavelengths()
+        self._sensitivities = self._sensitivity_integral()
 
         # Pre-calculate normalisation for observed ZL
         self._zl_ep = self._zl_obs_ep()
@@ -286,6 +288,22 @@ class Imager:
             pivot_waves[f_name] = (p1/p2)**0.5 * eff_data['Wavelength'].unit
 
         return pivot_waves
+
+    def _sensitivity_integral(self):
+        """
+        Utility function to calculate the sensitivity integral for each of the filters,
+        i.e. the factor to convert a constant spectral flux density in F_lambda units
+        to a count rate in electrons per second.
+        """
+        # Need to make sure units get preserved here.
+        sensitivities = {}
+
+        for (f_name, eff_data) in self._eff_areas.items():
+            s = np.trapz(eff_data['Wavelength'] * eff_data['Effective Area'], x=eff_data['Wavelength'])
+            s = s * eff_data['Effective Area'].unit * eff_data['Wavelength'].unit**2 * u.photon / (c.h * c.c)
+            sensitivities[f_name] = s.to((u.electron/u.second) / (u.Watt / (u.m**2 * u.micron))) 
+
+        return sensitivities
 
     def _zl_obs_ep(self):
         """
